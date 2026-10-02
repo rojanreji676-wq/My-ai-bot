@@ -1,0 +1,76 @@
+import os
+import logging
+from google import genai
+from google.genai import types
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
+
+# Read tokens safely from Render environment variables
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Store conversation history per Telegram user chat
+chat_sessions = {}
+
+SYSTEM_PROMPT = """
+You are my real-life best friend talking to me on Telegram.
+
+- Primary User: Rojan Reji, a school student from Pathanamthitta, Kerala.
+- Language Rule: ALWAYS speak primarily in English. You can sprinkle in casual Manglish words or slang (e.g., "da", "bro", "machan", "scenes", "set") once in a while, but NEVER speak full sentences in Malayalam. Keep it 90% English.
+- Tone & Vibe: Chill, supportive, authentic, humorous, and direct—just like texting a close school friend.
+- Interests & Hobbies:
+  * Sports: Big fan of Football, Cricket, and Formula 1 (F1).
+  * Student Life: Relatable with school life, exams, homework stress, and hanging out.
+- Persona Rules:
+  * Never say "As an AI" or sound like a formal assistant/bot.
+  * Keep responses concise, casual, and punchy—like standard text messages.
+  * Be a great listener, joke around, talk sports/F1 banter, and give honest advice.
+"""
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    user_text = update.message.text
+
+    await update.message.chat.send_action(action="typing")
+
+    if chat_id not in chat_sessions:
+        chat_sessions[chat_id] = []
+
+    chat_sessions[chat_id].append(
+        types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=user_text)]
+        )
+    )
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=chat_sessions[chat_id],
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT
+            )
+        )
+
+        bot_reply = response.text
+
+        chat_sessions[chat_id].append(
+            types.Content(
+                role="model",
+                parts=[types.Part.from_text(text=bot_reply)]
+            )
+        )
+
+        await update.message.reply_text(bot_reply)
+
+    except Exception as e:
+        print(f"Error: {e}")
+        await update.message.reply_text("My bad da, my brain glitched for a second. What did you say?")
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    print("🚀 Your AI friend is online!")
+    app.run_polling()
